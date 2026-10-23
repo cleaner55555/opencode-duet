@@ -1,0 +1,48 @@
+{
+  "name": "opencode-duet",
+  "version": "0.1.0",
+  "description": "Two people, one OpenCode session — plus a proactive Duet agent.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "opencode-duet": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -w -p tsconfig.json",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "opencode",
+    "pair-programming",
+    "collaboration",
+    "duet",
+    "ai-agent",
+    "cli"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "commander": "^13.1.0",
+    "localtunnel": "^2.0.2",
+    "picocolors": "^1.1.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/localtunnel": "^2.0.4",
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.13",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}
