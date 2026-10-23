@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import pc from "picocolors";
+import { oc as pc } from "./theme.js";
 import { runCli } from "./cli.js";
 
 runCli(process.argv).catch((error: unknown) => {

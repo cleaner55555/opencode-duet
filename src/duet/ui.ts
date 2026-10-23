@@ -1,5 +1,5 @@
 import readline from "node:readline";
-import pc from "picocolors";
+import { oc as pc } from "../theme.js";
 import type {
   ChannelInfo,
   HistoryEntry,
@@ -49,7 +49,7 @@ export function createUi(options: UiOptions): Ui {
     historySize: 200,
   });
 
-  const promptFor = () => pc.bold(pc.cyan(`you [#${activeChannel}]> `));
+  const promptFor = () => pc.bold(pc.primary(`you [#${activeChannel}]> `));
   const setPrompt = () => rl.setPrompt(promptFor());
 
   const write = (line = "") => {
@@ -75,7 +75,7 @@ export function createUi(options: UiOptions): Ui {
       } else if (entry.kind === "prompt") {
         write(pc.dim(`→ ${entry.user}: ${entry.text}`));
       } else {
-        const color = entry.source === "host" ? pc.cyan : pc.magenta;
+        const color = entry.source === "host" ? pc.info : pc.accent;
         write(`${color(entry.user)}: ${entry.text}`);
       }
     }
@@ -92,7 +92,7 @@ export function createUi(options: UiOptions): Ui {
           .map((channel) => {
             const name =
               channel.id === activeChannel
-                ? pc.bold(pc.cyan(`#${channel.name}`))
+                ? pc.bold(pc.primary(`#${channel.name}`))
                 : pc.dim(`#${channel.name}`);
             const count =
               channel.messageCount === undefined
@@ -108,7 +108,7 @@ export function createUi(options: UiOptions): Ui {
         activeChannel = message.channel.id;
         setPrompt();
         write(
-          pc.cyan(
+          pc.primary(
             `switched to #${message.channel.name} — session ${message.channel.sessionId}`,
           ),
         );
@@ -126,7 +126,7 @@ export function createUi(options: UiOptions): Ui {
         for (const line of message.text.split("\n")) write(pc.dim(line));
         break;
       case "chat": {
-        const color = message.source === "host" ? pc.cyan : pc.magenta;
+        const color = message.source === "host" ? pc.info : pc.accent;
         if (otherChannel(message)) {
           write(pc.dim(`${prefix(message)}${message.user}: ${message.text}`));
         } else {
@@ -215,7 +215,7 @@ export function createUi(options: UiOptions): Ui {
       return;
     }
     for (const channel of channels) {
-      const marker = channel.id === activeChannel ? pc.cyan("*") : " ";
+      const marker = channel.id === activeChannel ? pc.primary("*") : " ";
       const count =
         channel.messageCount === undefined ? "" : ` · ${channel.messageCount} msgs`;
       write(

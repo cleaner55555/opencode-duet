@@ -1,11 +1,16 @@
 import { randomBytes } from "node:crypto";
 import readline from "node:readline";
-import pc from "picocolors";
+import { oc as pc } from "./theme.js";
 import { OpenCodeBridge, type BridgeEvent } from "./opencode.js";
 import { loadAgentConfig } from "./agent/config.js";
 import { CONFIG_FILE, expandHome, workspaceFile } from "./paths.js";
 import { ChannelStore, type Channel } from "./duet/channels.js";
 import { SharedMemory } from "./duet/memory.js";
+import {
+  LocalSessionCreator,
+  OpenCodeSessionCreator,
+  type SessionCreator,
+} from "./duet/sessions.js";
 
 export interface ChatOptions {
   session?: string;
@@ -33,6 +38,19 @@ export async function chatCommand(options: ChatOptions = {}): Promise<void> {
   const memory = new SharedMemory(workspaceFile(baseSessionId, "memory.json"));
   let active: Channel = store.main;
 
+  const openCodeSessions = new OpenCodeSessionCreator();
+  let sessions: SessionCreator = openCodeSessions;
+  let childSessions = false;
+  try {
+    await openCodeSessions.ensureBase(baseSessionId, cwd, "Duet chat");
+    childSessions = true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(pc.yellow(`OpenCode child sessions unavailable: ${message}`));
+    console.log(pc.dim("Channels will use standalone sessions."));
+    sessions = new LocalSessionCreator();
+  }
+
   const bridge = new OpenCodeBridge();
   let rl: readline.Interface | null = null;
   let responseChunks: string[] = [];
@@ -41,7 +59,7 @@ export async function chatCommand(options: ChatOptions = {}): Promise<void> {
 
   const reprompt = () => rl?.prompt(true);
   const setPrompt = () =>
-    rl?.setPrompt(pc.bold(pc.cyan(`you [#${active.name}]> `)));
+    rl?.setPrompt(pc.bold(pc.primary(`you [#${active.name}]> `)));
 
   bridge.on("event", (event: BridgeEvent) => {
     process.stdout.write("\r\x1b[2K");
@@ -97,8 +115,12 @@ export async function chatCommand(options: ChatOptions = {}): Promise<void> {
       return;
     }
     for (const channel of channels) {
-      const marker = channel.id === active.id ? pc.cyan("*") : " ";
-      console.log(`${marker} #${channel.name} ${pc.dim(channel.sessionId)}`);
+      const marker = channel.id === active.id ? pc.primary("*") : " ";
+      const name =
+        channel.id === active.id
+          ? pc.primary(`#${channel.name}`)
+          : `#${channel.name}`;
+      console.log(`${marker} ${name} ${pc.dim(channel.sessionId)}`);
     }
   };
 
@@ -115,7 +137,7 @@ export async function chatCommand(options: ChatOptions = {}): Promise<void> {
     active = channel;
     setPrompt();
     console.log(
-      pc.cyan(`switched to #${channel.name} — session ${channel.sessionId}`),
+      pc.primary(`switched to #${channel.name} — session ${channel.sessionId}`),
     );
   };
 
@@ -123,6 +145,7 @@ export async function chatCommand(options: ChatOptions = {}): Promise<void> {
     pc.dim(
       `OpenCode Duet chat — workspace ${baseSessionId}\n` +
         `channel #${active.name} — session ${active.sessionId}\n` +
+        `channels: ${childSessions ? "OpenCode child sessions" : "standalone sessions"}\n` +
         `cwd ${cwd}${model ? ` — model ${model}` : ""}\n` +
         "Type /channels, /new <name>, /switch <name>, /memory or /exit.",
     ),
@@ -169,22 +192,50 @@ export async function chatCommand(options: ChatOptions = {}): Promise<void> {
           printChannels();
           break;
         case "new": {
-          const name = arg || `channel-${store.list().length + 1}`;
-          try {
-            const channel = store.create(name, "you");
-            active = channel;
-            setPrompt();
-            console.log(
-              pc.cyan(
-                `created #${channel.name} — session ${channel.sessionId}`,
-              ),
-            );
-          } catch (error) {
-            console.log(
-              pc.red(error instanceof Error ? error.message : String(error)),
-            );
-          }
-          break;
+          const display =
+            arg.trim().replace(/^#/, "").slice(0, 48) ||
+            `channel-${store.list().length + 1}`;
+          console.log(pc.dim(`creating #${display}…`));
+          void (async () => {
+            let sessionId: string | undefined;
+            try {
+              sessionId = await sessions.createChild(
+                baseSessionId,
+                `#${display}`,
+                cwd,
+              );
+            } catch (error) {
+              const message =
+                error instanceof Error ? error.message : String(error);
+              console.log(
+                pc.yellow(`child session unavailable: ${message}`),
+              );
+              console.log(pc.dim("using a standalone session"));
+            }
+
+            try {
+              const channel = store.create(
+                display,
+                "you",
+                undefined,
+                sessionId,
+              );
+              active = channel;
+              setPrompt();
+              console.log(
+                pc.primary(
+                  `created #${channel.name} — session ${channel.sessionId}`,
+                ),
+              );
+            } catch (error) {
+              if (sessionId) void sessions.remove(sessionId);
+              console.log(
+                pc.red(error instanceof Error ? error.message : String(error)),
+              );
+            }
+            rl?.prompt();
+          })();
+          return;
         }
         case "switch":
         case "s":

@@ -10,7 +10,7 @@ Two people, one OpenCode session — plus a proactive Duet agent.
 ## Requirements
 
 - Node.js 20+
-- [OpenCode](https://opencode.ai) v2+ in `PATH`, already configured with a model
+- [OpenCode](https://opencode.ai) v2.1+ in `PATH`, already configured with a model (native child sessions use `opencode api`; older versions fall back to standalone channel sessions)
 - macOS for notifications and the launchd installer (the CLI itself works on Linux too)
 - Optional: `ngrok` for a custom tunnel, `icalBuddy`/`gh`/`himalaya` for richer sources
 
@@ -95,6 +95,8 @@ Guest prompts are **held for host approval by default**. The host sees the full 
 Channels are named sub-threads inside one Duet workspace, similar to Slack channels or Claude Duet channels:
 
 - Every channel has its own OpenCode session, so a long task in `#sales` does not fill the main thread's context.
+- New channels are native OpenCode **child sessions** under the base Duet session (`parentID`). OpenCode keeps them grouped under the parent and `opencode session list` still shows only top-level sessions. If the OpenCode API is unavailable, Duet falls back to a standalone session and tells you.
+- `#main` is the base session itself; `/new` creates a child session for every other channel.
 - All channels share memory. Notes from `/memory add` and short summaries of turns from other channels are injected into each prompt.
 - Each person has their own active channel; messages and OpenCode output are scoped to it. Activity in another channel is shown dimmed, e.g. `[#sales] → Guest: …`.
 - Channels are stored under `~/.local/state/opencode-duet/workspaces/<session>/`. Use `--session <id>` on the host if you want to keep the same channels across restarts.
@@ -118,6 +120,14 @@ List channels from a terminal:
 opencode-duet channels --session <id>
 opencode-duet channels --session <id> --all   # include archived
 ```
+
+The list prints each channel's OpenCode session id. To review a channel directly in OpenCode, open that session:
+
+```bash
+opencode --session <child-session-id>
+```
+
+The base session remains the parent, and the channel sessions are grouped under it in OpenCode's session data.
 
 ### Remote partner
 
@@ -181,13 +191,15 @@ opencode-duet dashboard
 
 Opens `http://127.0.0.1:8787` with channels, recent briefs, pending approvals, Approve/Reject buttons, and a **Run brief now** button. The server binds to localhost only.
 
+The CLI and dashboard use OpenCode's default dark theme (`opencode`): primary orange `#fab283`, secondary blue `#5c9cf5`, accent purple `#9d7cd8`, success green `#7fd88f`, error red `#e06c75`, warning orange `#f5a742`, info cyan `#56b6c2`, text `#eeeeee`, muted `#808080`, background `#0a0a0a`, panel `#141414`, border `#484848`. The CLI emits truecolor when the terminal advertises it and falls back to 256-color approximations otherwise.
+
 ### Chat with the agent
 
 ```bash
 opencode-duet chat
 ```
 
-Opens a small terminal chat against the same OpenCode workspace the agent uses (`ses_duet_agent` by default). `/new <name>` creates a channel with its own OpenCode session, `/switch <name>` moves between channels, `/memory` shows shared memory, and `/exit` leaves. This is optional — you can also open the session in the OpenCode TUI.
+Opens a small terminal chat against the same OpenCode workspace the agent uses (`ses_duet_agent` by default). `/new <name>` creates a channel as an OpenCode child session under that workspace, `/switch <name>` moves between channels, `/memory` shows shared memory, and `/exit` leaves. This is optional — you can also open the base session in the OpenCode TUI and review its child sessions there.
 
 ### Approvals
 

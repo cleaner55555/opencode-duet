@@ -30,7 +30,7 @@ export function slugifyChannel(name: string): string {
   );
 }
 
-function channelSessionId(id: string): string {
+export function makeChannelSessionId(id: string): string {
   const clean = id.replace(/[^a-z0-9]/g, "").slice(0, 24) || "ch";
   return `ses_duet_${clean}_${randomBytes(4).toString("hex")}`;
 }
@@ -84,7 +84,12 @@ export class ChannelStore {
     );
   }
 
-  create(name: string, createdBy: string, description?: string): Channel {
+  /**
+   * Validate a requested channel name and return the display form. Callers can
+   * use this before creating an OpenCode child session, so a duplicate name
+   * does not leave an orphan session behind.
+   */
+  assertAvailable(name: string): string {
     const display = name.trim().replace(/^#/, "").slice(0, 48);
     if (!display) throw new Error("channel name is required");
     if (
@@ -94,6 +99,16 @@ export class ChannelStore {
     ) {
       throw new Error(`channel #${display} already exists`);
     }
+    return display;
+  }
+
+  create(
+    name: string,
+    createdBy: string,
+    description?: string,
+    sessionId?: string,
+  ): Channel {
+    const display = this.assertAvailable(name);
 
     let id = slugifyChannel(display);
     let suffix = 2;
@@ -101,10 +116,15 @@ export class ChannelStore {
       id = `${slugifyChannel(display)}-${suffix++}`;
     }
 
+    const channelSession = sessionId?.trim();
+    if (channelSession !== undefined && !channelSession.startsWith("ses_")) {
+      throw new Error(`invalid OpenCode session id: ${sessionId}`);
+    }
+
     const channel: Channel = {
       id,
       name: display,
-      sessionId: channelSessionId(id),
+      sessionId: channelSession || makeChannelSessionId(id),
       createdAt: Date.now(),
       createdBy,
       archived: false,

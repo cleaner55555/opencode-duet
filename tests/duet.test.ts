@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { AgentBridge, RunPromptOptions } from "../src/opencode.js";
 import { DuetClient } from "../src/duet/client.js";
 import { DuetServer, type PendingPrompt } from "../src/duet/server.js";
+import type { SessionCreator } from "../src/duet/sessions.js";
 import type { ServerMessage } from "../src/duet/protocol.js";
 
 class FakeBridge extends EventEmitter implements AgentBridge {
@@ -27,6 +28,24 @@ class FakeBridge extends EventEmitter implements AgentBridge {
 
   lastSessionId(): string | null {
     return this.runs.at(-1)?.sessionId ?? null;
+  }
+}
+
+class FakeSessions implements SessionCreator {
+  children: Array<{ parentId: string; title: string }> = [];
+  removed: string[] = [];
+  fail = false;
+
+  async ensureBase(): Promise<void> {}
+
+  async createChild(parentId: string, title: string): Promise<string> {
+    if (this.fail) throw new Error("opencode api unavailable");
+    this.children.push({ parentId, title });
+    return `ses_child_${this.children.length}`;
+  }
+
+  async remove(sessionId: string): Promise<void> {
+    this.removed.push(sessionId);
   }
 }
 
@@ -58,7 +77,10 @@ function waitFor<T extends ServerMessage["type"]>(
   });
 }
 
-async function startDuet(approvalMode = true) {
+async function startDuet(
+  approvalMode = true,
+  sessions?: SessionCreator,
+) {
   const bridge = new FakeBridge();
   const server = new DuetServer({
     hostUser: "Host",
@@ -66,6 +88,7 @@ async function startDuet(approvalMode = true) {
     sessionId: "ses_test",
     bridge,
     approvalMode,
+    sessions,
   });
   const port = await server.start(0);
   cleanups.push(() => server.stop());
@@ -168,6 +191,51 @@ describe("duet server/client", () => {
     expect(run.sessionId).not.toBe("ses_test");
     expect(run.prompt).toContain("[Duet workspace | channel #sales");
     expect(run.prompt).toContain("close the deal");
+  });
+
+  it("creates channels as OpenCode child sessions under the base session", async () => {
+    const sessions = new FakeSessions();
+    const { port, bridge } = await startDuet(false, sessions);
+    const client = new DuetClient("Guest", "secret");
+    cleanups.push(() => client.close());
+    await client.connect(`ws://127.0.0.1:${port}`);
+
+    const switched = waitFor(client, "channel_switched");
+    const channels = waitFor(client, "channels");
+    client.sendCreateChannel("sales");
+    const channel = await switched;
+
+    expect(sessions.children).toEqual([
+      { parentId: "ses_test", title: "#sales" },
+    ]);
+    expect(channel.channel.sessionId).toBe("ses_child_1");
+    const list = await channels;
+    expect(
+      list.channels.find((item) => item.id === channel.channel.id)?.sessionId,
+    ).toBe("ses_child_1");
+
+    const stream = waitFor(client, "stream");
+    client.sendPrompt("close the deal");
+    await stream;
+    expect(bridge.runs.at(-1)?.sessionId).toBe("ses_child_1");
+  });
+
+  it("falls back to a standalone session when child creation fails", async () => {
+    const sessions = new FakeSessions();
+    sessions.fail = true;
+    const { port } = await startDuet(false, sessions);
+    const client = new DuetClient("Guest", "secret");
+    cleanups.push(() => client.close());
+    await client.connect(`ws://127.0.0.1:${port}`);
+
+    const notice = waitFor(client, "notice");
+    const switched = waitFor(client, "channel_switched");
+    client.sendCreateChannel("sales");
+    await expect(notice).resolves.toMatchObject({
+      message: expect.stringContaining("standalone session"),
+    });
+    const channel = await switched;
+    expect(channel.channel.sessionId).toMatch(/^ses_duet_sales_/);
   });
 
   it("keeps channel history separate and replays it on switch", async () => {

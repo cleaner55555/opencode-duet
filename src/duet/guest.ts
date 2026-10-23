@@ -1,4 +1,4 @@
-import pc from "picocolors";
+import { oc as pc } from "../theme.js";
 import { DuetClient } from "./client.js";
 import { createUi } from "./ui.js";
 import type { ServerMessage } from "./protocol.js";

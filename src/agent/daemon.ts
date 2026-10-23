@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import pc from "picocolors";
+import { oc as pc } from "../theme.js";
 import { CONFIG_FILE, LOG_FILE, STATE_DIR, ensureDirs, expandHome } from "../paths.js";
 import { ApprovalStore, formatApproval } from "./approvals.js";
 import {

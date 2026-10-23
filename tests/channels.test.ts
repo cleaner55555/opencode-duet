@@ -44,6 +44,22 @@ describe("channel store", () => {
     expect(store.get("sales-q4")).toBe(channel);
   });
 
+  it("stores a provided OpenCode child session id", () => {
+    const store = new ChannelStore(null, "ses_base");
+    const channel = store.create(
+      "sales",
+      "Host",
+      undefined,
+      "ses_child_123",
+    );
+    expect(channel.sessionId).toBe("ses_child_123");
+    expect(store.assertAvailable("marketing")).toBe("marketing");
+    expect(() => store.assertAvailable("sales")).toThrow("already exists");
+    expect(() =>
+      store.create("support", "Host", undefined, "not-a-session"),
+    ).toThrow("invalid OpenCode session id");
+  });
+
   it("persists channels and reloads them", () => {
     const file = tempFile();
     const store = new ChannelStore(file, "ses_base");

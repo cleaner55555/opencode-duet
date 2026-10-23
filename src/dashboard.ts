@@ -3,7 +3,7 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { promisify } from "node:util";
-import pc from "picocolors";
+import { oc as pc, theme } from "./theme.js";
 import { BRIEFS_DIR, CONFIG_FILE, workspaceFile } from "./paths.js";
 import { ChannelStore } from "./duet/channels.js";
 import { ApprovalStore, formatApproval } from "./agent/approvals.js";
@@ -78,25 +78,26 @@ function page(): string {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OpenCode Duet</title>
 <style>
-  :root { color-scheme: dark; --bg:#0d1117; --panel:#161b22; --line:#30363d; --fg:#e6edf3; --dim:#8b949e; --green:#3fb950; --red:#f85149; --yellow:#d29922; }
+  :root { color-scheme: dark; --bg:${theme.background}; --panel:${theme.panel}; --element:${theme.element}; --line:${theme.border}; --fg:${theme.text}; --dim:${theme.muted}; --primary:${theme.primary}; --secondary:${theme.secondary}; --accent:${theme.accent}; --green:${theme.success}; --red:${theme.error}; --yellow:${theme.warning}; --cyan:${theme.info}; }
   * { box-sizing: border-box; }
   body { margin:0; font:14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background:var(--bg); color:var(--fg); }
   header { padding:18px 22px; border-bottom:1px solid var(--line); display:flex; gap:16px; align-items:baseline; }
-  header h1 { font-size:18px; margin:0; }
+  header h1 { font-size:18px; margin:0; color:var(--primary); }
   header span { color:var(--dim); font-size:12px; }
   main { display:grid; grid-template-columns: 320px 1fr; min-height:calc(100vh - 62px); }
   aside { border-right:1px solid var(--line); padding:16px; overflow:auto; }
   section { padding:16px 22px; overflow:auto; }
   h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); margin:18px 0 8px; }
-  button { background:#21262d; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:5px 10px; cursor:pointer; font:inherit; }
-  button:hover { border-color:#8b949e; }
+  button { background:var(--element); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:5px 10px; cursor:pointer; font:inherit; }
+  button:hover { border-color:var(--dim); }
   button.green { color:var(--green); }
   button.red { color:var(--red); }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-bottom:8px; }
   .card .title { font-weight:600; }
+  .card .title .channel { color:var(--primary); }
   .card .meta { color:var(--dim); font-size:12px; margin-top:2px; }
   .brief { cursor:pointer; }
-  .brief:hover { border-color:#8b949e; }
+  .brief:hover { border-color:var(--dim); }
   .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   pre { white-space:pre-wrap; word-break:break-word; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:16px; }
   .muted { color:var(--dim); }
@@ -148,7 +149,7 @@ async function refresh() {
     state = await api('/api/state');
     $('status').textContent = state.session + ' · ' + state.cwd + ' · ' + state.channels.length + ' channels · next brief: ' + (state.nextBrief || 'disabled');
     $('channels').innerHTML = state.channels.length ? state.channels.map((c) =>
-      '<div class="card"><div class="title">#' + esc(c.name) + '</div><div class="meta">' + esc(c.createdBy) + ' · ' + esc(c.sessionId) + '</div></div>'
+      '<div class="card"><div class="title"><span class="channel">#' + esc(c.name) + '</span></div><div class="meta">' + esc(c.createdBy) + ' · ' + esc(c.sessionId) + '</div></div>'
     ).join('') : '<div class="muted">samo #main</div>';
     $('briefs').innerHTML = state.briefs.length ? state.briefs.map((b) =>
       '<div class="card brief" data-file="' + esc(b.file) + '"><div class="title">' + esc(b.title) + '</div><div class="meta">' + esc(b.created) + '</div></div>'

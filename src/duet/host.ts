@@ -2,13 +2,18 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import os from "node:os";
 import localtunnel from "localtunnel";
-import pc from "picocolors";
+import { oc as pc } from "../theme.js";
 import { OpenCodeBridge } from "../opencode.js";
-import { workspaceFile } from "../paths.js";
+import { expandHome, workspaceFile } from "../paths.js";
 import { DuetServer } from "./server.js";
 import { createUi } from "./ui.js";
 import { ChannelStore } from "./channels.js";
 import { SharedMemory } from "./memory.js";
+import {
+  LocalSessionCreator,
+  OpenCodeSessionCreator,
+  type SessionCreator,
+} from "./sessions.js";
 import type { ServerMessage } from "./protocol.js";
 
 export interface HostOptions {
@@ -107,24 +112,39 @@ export async function hostCommand(options: HostOptions): Promise<void> {
     throw new Error(`Unknown tunnel "${options.tunnel}" (use none, ngrok, localtunnel)`);
   }
 
+  const cwd = expandHome(options.cwd ?? process.cwd());
   const bridge = new OpenCodeBridge();
   const channels = new ChannelStore(
     workspaceFile(sessionId, "channels.json"),
     sessionId,
   );
   const memory = new SharedMemory(workspaceFile(sessionId, "memory.json"));
+  const openCodeSessions = new OpenCodeSessionCreator();
+  let sessions: SessionCreator = openCodeSessions;
+  let childSessions = false;
+  try {
+    await openCodeSessions.ensureBase(sessionId, cwd, "Duet workspace");
+    childSessions = true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(pc.yellow(`OpenCode child sessions unavailable: ${message}`));
+    console.error(pc.dim("Channels will use standalone sessions."));
+    sessions = new LocalSessionCreator();
+  }
+
   const server = new DuetServer({
     hostUser: name,
     password,
     sessionId,
     bridge,
     approvalMode: !options.auto,
-    cwd: options.cwd,
+    cwd,
     model: options.model,
     agent: options.agent,
     auto: Boolean(options.auto),
     channels,
     memory,
+    sessions,
   });
 
   const port = await server.start(requestedPort);
@@ -161,16 +181,18 @@ export async function hostCommand(options: HostOptions): Promise<void> {
   const joinCommand = `opencode-duet join ${joinUrl} --password ${password} --name guest`;
 
   console.log("");
-  console.log(pc.bold(pc.green("OpenCode Duet — session ready")));
-  console.log(`  host:     ${pc.cyan(name)}`);
+  console.log(pc.bold(pc.primary("OpenCode Duet — session ready")));
+  console.log(`  host:     ${pc.info(name)}`);
   console.log(`  session:  ${sessionId}`);
-  console.log(`  channels: #main (use /new <name> to add one)`);
+  console.log(
+    `  channels: #main (${childSessions ? "OpenCode child sessions" : "standalone sessions"}; use /new <name>)`,
+  );
   console.log(`  approval: ${options.auto ? "off (--auto)" : "on"}`);
   console.log(`  local:    ${lanUrl}`);
   if (tunnelUrl) console.log(`  public:   ${tunnelUrl}`);
   console.log("");
   console.log(pc.bold("Send this to your partner:"));
-  console.log(pc.cyan(`  ${joinCommand}`));
+  console.log(pc.secondary(`  ${joinCommand}`));
   console.log("");
 
   let closed = false;
@@ -193,7 +215,7 @@ export async function hostCommand(options: HostOptions): Promise<void> {
     onAuto: (enabled) => server.setApprovalMode(enabled),
     onSwitchChannel: (channel) => server.switchChannel("host", channel),
     onCreateChannel: (channelName) =>
-      server.createChannel("host", channelName),
+      void server.createChannel("host", channelName),
     onArchiveChannel: (channel) => server.archiveChannel("host", channel),
     onChannels: () => server.sendChannels("host"),
     onMemory: () => server.sendMemory("host"),

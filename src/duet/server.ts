@@ -17,6 +17,7 @@ import {
 } from "./protocol.js";
 import { ChannelStore, type Channel } from "./channels.js";
 import { SharedMemory } from "./memory.js";
+import { LocalSessionCreator, type SessionCreator } from "./sessions.js";
 
 export interface DuetServerOptions {
   hostUser: string;
@@ -30,6 +31,7 @@ export interface DuetServerOptions {
   auto?: boolean;
   channels?: ChannelStore;
   memory?: SharedMemory;
+  sessions?: SessionCreator;
 }
 
 export interface PendingPrompt {
@@ -61,6 +63,7 @@ export class DuetServer extends EventEmitter {
   private stopped = false;
   private readonly channels: ChannelStore;
   private readonly memory: SharedMemory;
+  private readonly sessions: SessionCreator;
   private hostChannelId = "main";
   private guestChannelId = "main";
   private history = new Map<string, HistoryEntry[]>();
@@ -73,6 +76,7 @@ export class DuetServer extends EventEmitter {
     this.channels =
       options.channels ?? new ChannelStore(null, options.sessionId);
     this.memory = options.memory ?? new SharedMemory(null);
+    this.sessions = options.sessions ?? new LocalSessionCreator();
     this.hostChannelId = this.channels.main.id;
     this.guestChannelId = this.channels.main.id;
     this.options.bridge.on("event", this.onBridgeEvent);
@@ -239,13 +243,45 @@ export class DuetServer extends EventEmitter {
     this.sendChannels(role);
   }
 
-  createChannel(role: Role, name: string, description?: string): void {
+  async createChannel(
+    role: Role,
+    name: string,
+    description?: string,
+  ): Promise<void> {
     const by =
       role === "host" ? this.options.hostUser : this.guestUser ?? "guest";
+    let display: string;
+    try {
+      display = this.channels.assertAvailable(name);
+    } catch (error) {
+      this.sendError(role, error instanceof Error ? error.message : String(error));
+      return;
+    }
+
+    let sessionId: string | undefined;
+    try {
+      sessionId = await this.sessions.createChild(
+        this.options.sessionId,
+        `#${display}`,
+        this.options.cwd,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.emit("log", `channel #${display}: ${message}`);
+      this.sendToRole(role, {
+        type: "notice",
+        message:
+          `Could not create an OpenCode child session for #${display}; ` +
+          "using a standalone session instead.",
+        timestamp: Date.now(),
+      });
+    }
+
     let channel: Channel;
     try {
-      channel = this.channels.create(name, by, description);
+      channel = this.channels.create(display, by, description, sessionId);
     } catch (error) {
+      if (sessionId) void this.sessions.remove(sessionId);
       this.sendError(role, error instanceof Error ? error.message : String(error));
       return;
     }
@@ -426,7 +462,7 @@ export class DuetServer extends EventEmitter {
           break;
 
         case "create_channel":
-          this.createChannel("guest", message.name, message.description);
+          void this.createChannel("guest", message.name, message.description);
           break;
 
         case "archive_channel":

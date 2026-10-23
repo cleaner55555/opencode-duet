@@ -1,6 +1,7 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
 import { Command } from "commander";
-import pc from "picocolors";
+import { oc as pc } from "./theme.js";
 import { guestCommand } from "./duet/guest.js";
 import { hostCommand } from "./duet/host.js";
 import {
@@ -19,6 +20,10 @@ import { ChannelStore } from "./duet/channels.js";
 import { chatCommand } from "./chat.js";
 import { startDashboard } from "./dashboard.js";
 
+const { version } = JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+) as { version: string };
+
 export async function runCli(argv: string[]): Promise<void> {
   const program = new Command();
 
@@ -27,7 +32,7 @@ export async function runCli(argv: string[]): Promise<void> {
     .description(
       "Two people, one OpenCode session — plus a proactive Duet agent.",
     )
-    .version("0.2.0");
+    .version(version);
 
   program
     .command("host")
@@ -82,10 +87,10 @@ export async function runCli(argv: string[]): Promise<void> {
         return;
       }
       for (const channel of channels) {
-        const marker = channel.id === "main" ? "*" : " ";
+        const marker = channel.id === "main" ? pc.primary("*") : " ";
         const archived = channel.archived ? pc.dim(" (archived)") : "";
         console.log(
-          `${marker} #${channel.name}${archived} ${pc.dim(channel.sessionId)}`,
+          `${marker} ${pc.primary(`#${channel.name}`)}${archived} ${pc.dim(channel.sessionId)}`,
         );
       }
     });
