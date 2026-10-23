@@ -3,3 +3,21 @@ dist/
 *.log
 .DS_Store
 coverage/
+
+# Local OpenCode / Duet runtime state (never publish sessions)
+.opencode/
+workspaces/
+briefs/
+*.jsonl
+approvals.json
+channels.json
+memory.json
+
+# Secrets and credentials
+.env
+.env.*
+.npmrc
+*.pem
+*.key
+*.p12
+*.pfx
