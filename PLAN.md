@@ -21,6 +21,7 @@
 - [x] Kanali u `chat` komandi i prikaz na dashboardu
 - [x] `opencode-duet channels` CLI
 - [x] Boje usklađene sa OpenCode default temom (CLI + dashboard)
+- [x] Dashboard Light/Dark toggle sa pamćenjem izbora
 - [x] Tests + build (43 testa prolazi)
 - [x] Global install (`~/.local/bin/opencode-duet`) + smoke testovi
 - [x] README + LICENSE
@@ -52,6 +53,7 @@
 - Kanali se čuvaju u `workspaces/<session>/channels.json`; istorija chata je u memoriji procesa, OpenCode sesija nosi sopstveni kontekst.
 - Gost može da kreira i menja kanale; arhiviranje je samo za hosta.
 - Boje: OpenCode default dark tema (`#fab283` primary, `#5c9cf5` secondary, `#9d7cd8` accent, `#7fd88f` success, `#e06c75` error, `#f5a742` warning, `#56b6c2` info, `#eeeeee` text, `#808080` muted, `#0a0a0a` bg, `#141414` panel, `#484848` border). CLI koristi truecolor ako terminal to podržava, inače 256-color fallback; dashboard koristi iste vrednosti kroz CSS varijable.
+- Dashboard ima Light/Dark toggle u headeru; izbor se čuva u `localStorage`. Light paleta je OpenCode light tema (`#d68c27` primary, `#3b7dd8` secondary, `#7b5bb6` accent, `#3d9a57` success, `#d1383d` error, `#318795` info, `#1a1a1a` text, `#8a8a8a` muted, `#ffffff` bg, `#fafafa` panel, `#b8b8b8` border).
 
 ## Sledeće (opciono)
 - E2E enkripcija za duet sesiju.

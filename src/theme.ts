@@ -20,6 +20,26 @@ export const theme = {
   border: "#484848",
 } as const;
 
+/**
+ * OpenCode's default light theme ("opencode").
+ * Values come from the same v2 theme file.
+ */
+export const lightTheme = {
+  primary: "#d68c27",
+  secondary: "#3b7dd8",
+  accent: "#7b5bb6",
+  error: "#d1383d",
+  warning: "#d68c27",
+  success: "#3d9a57",
+  info: "#318795",
+  text: "#1a1a1a",
+  muted: "#8a8a8a",
+  background: "#ffffff",
+  panel: "#fafafa",
+  element: "#f5f5f5",
+  border: "#b8b8b8",
+} as const;
+
 const enabled = base.isColorSupported;
 const truecolor =
   enabled &&

@@ -193,6 +193,8 @@ Opens `http://127.0.0.1:8787` with channels, recent briefs, pending approvals, A
 
 The CLI and dashboard use OpenCode's default dark theme (`opencode`): primary orange `#fab283`, secondary blue `#5c9cf5`, accent purple `#9d7cd8`, success green `#7fd88f`, error red `#e06c75`, warning orange `#f5a742`, info cyan `#56b6c2`, text `#eeeeee`, muted `#808080`, background `#0a0a0a`, panel `#141414`, border `#484848`. The CLI emits truecolor when the terminal advertises it and falls back to 256-color approximations otherwise.
 
+A **Light/Dark** button in the dashboard header switches between OpenCode's dark and light palettes. The choice is stored in `localStorage` and restored on reload.
+
 ### Chat with the agent
 
 ```bash

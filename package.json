@@ -1,6 +1,6 @@
 {
   "name": "opencode-duet",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Two people, one OpenCode session — plus a proactive Duet agent.",
   "type": "module",
   "main": "dist/index.js",

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { promisify } from "node:util";
-import { oc as pc, theme } from "./theme.js";
+import { oc as pc, theme, lightTheme } from "./theme.js";
 import { BRIEFS_DIR, CONFIG_FILE, workspaceFile } from "./paths.js";
 import { ChannelStore } from "./duet/channels.js";
 import { ApprovalStore, formatApproval } from "./agent/approvals.js";
@@ -77,13 +77,21 @@ function page(): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OpenCode Duet</title>
+<script>
+  try {
+    const saved = localStorage.getItem("opencode-duet-theme");
+    if (saved === "light" || saved === "dark") document.documentElement.dataset.theme = saved;
+  } catch {}
+</script>
 <style>
   :root { color-scheme: dark; --bg:${theme.background}; --panel:${theme.panel}; --element:${theme.element}; --line:${theme.border}; --fg:${theme.text}; --dim:${theme.muted}; --primary:${theme.primary}; --secondary:${theme.secondary}; --accent:${theme.accent}; --green:${theme.success}; --red:${theme.error}; --yellow:${theme.warning}; --cyan:${theme.info}; }
+  :root[data-theme="light"] { color-scheme: light; --bg:${lightTheme.background}; --panel:${lightTheme.panel}; --element:${lightTheme.element}; --line:${lightTheme.border}; --fg:${lightTheme.text}; --dim:${lightTheme.muted}; --primary:${lightTheme.primary}; --secondary:${lightTheme.secondary}; --accent:${lightTheme.accent}; --green:${lightTheme.success}; --red:${lightTheme.error}; --yellow:${lightTheme.warning}; --cyan:${lightTheme.info}; }
   * { box-sizing: border-box; }
   body { margin:0; font:14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background:var(--bg); color:var(--fg); }
   header { padding:18px 22px; border-bottom:1px solid var(--line); display:flex; gap:16px; align-items:baseline; }
   header h1 { font-size:18px; margin:0; color:var(--primary); }
   header span { color:var(--dim); font-size:12px; }
+  header .theme-toggle { margin-left:auto; font-size:12px; padding:3px 9px; }
   main { display:grid; grid-template-columns: 320px 1fr; min-height:calc(100vh - 62px); }
   aside { border-right:1px solid var(--line); padding:16px; overflow:auto; }
   section { padding:16px 22px; overflow:auto; }
@@ -111,6 +119,7 @@ function page(): string {
 <header>
   <h1>OpenCode Duet</h1>
   <span id="status">loading…</span>
+  <button id="theme" class="theme-toggle" type="button" aria-label="Switch color theme">Light</button>
 </header>
 <main>
   <aside>
@@ -132,7 +141,30 @@ function page(): string {
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
+const THEME_KEY = "opencode-duet-theme";
 let state = null;
+
+function applyTheme(value) {
+  const next = value === "light" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem(THEME_KEY, next); } catch {}
+  const button = $("theme");
+  if (button) {
+    button.textContent = next === "light" ? "Dark" : "Light";
+    button.title = next === "light" ? "Switch to dark theme" : "Switch to light theme";
+  }
+}
+
+function initTheme() {
+  let saved = null;
+  try { saved = localStorage.getItem(THEME_KEY); } catch {}
+  applyTheme(saved === "light" ? "light" : "dark");
+}
+
+initTheme();
+$("theme").onclick = () => {
+  applyTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light");
+};
 
 async function api(path, options) {
   const res = await fetch(path, options);
