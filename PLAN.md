@@ -11,6 +11,7 @@
 - [x] Host/join CLI + readline UI
 - [x] Agent config + scheduler + runner + approvals
 - [x] Dashboard (briefs + approve/reject)
+- [x] Chat sa agent sesijom (`opencode-duet chat`)
 - [x] Tests + build (21 testova prolazi)
 - [x] Global install (`~/.local/bin/opencode-duet`) + smoke testovi
 - [x] README + LICENSE

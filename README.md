@@ -146,6 +146,14 @@ opencode-duet dashboard
 
 Opens `http://127.0.0.1:8787` with recent briefs, pending approvals, Approve/Reject buttons, and a **Run brief now** button. The server binds to localhost only.
 
+### Chat with the agent
+
+```bash
+opencode-duet chat
+```
+
+Opens a small terminal chat against the same OpenCode session the agent uses (`ses_duet_agent` by default). Use `/new` for a fresh session and `/exit` to leave. This is optional — you can also open the session in the OpenCode TUI.
+
 ### Approvals
 
 The agent never executes risky actions itself. It proposes them in a fenced block:

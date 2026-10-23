@@ -13,6 +13,7 @@ import {
   writeDefaultConfig,
 } from "./agent/daemon.js";
 import { ApprovalStore, formatApproval } from "./agent/approvals.js";
+import { chatCommand } from "./chat.js";
 import { startDashboard } from "./dashboard.js";
 
 export async function runCli(argv: string[]): Promise<void> {
@@ -57,6 +58,19 @@ export async function runCli(argv: string[]): Promise<void> {
     .option("--config <file>", "agent config file")
     .action(async (options) => {
       await runAgentOnce({ config: options.config });
+    });
+
+  program
+    .command("chat")
+    .description("chat with the Duet agent session")
+    .option("--session <id>", "OpenCode session id")
+    .option("--model <model>", "OpenCode model (provider/model)")
+    .option("--agent <agent>", "OpenCode agent name")
+    .option("--cwd <dir>", "working directory for OpenCode")
+    .option("--config <file>", "agent config file")
+    .option("--auto", "auto-approve OpenCode tools")
+    .action(async (options) => {
+      await chatCommand(options);
     });
 
   program
