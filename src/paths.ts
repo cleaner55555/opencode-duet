@@ -18,6 +18,7 @@ export const STATE_FILE = path.join(STATE_DIR, "state.json");
 export const BRIEFS_DIR = path.join(STATE_DIR, "briefs");
 export const LOGS_DIR = path.join(STATE_DIR, "logs");
 export const LOG_FILE = path.join(LOGS_DIR, "agent.log");
+export const WORKSPACES_DIR = path.join(STATE_DIR, "workspaces");
 
 export function ensureDirs(): void {
   for (const dir of [CONFIG_DIR, STATE_DIR, BRIEFS_DIR, LOGS_DIR]) {
@@ -37,4 +38,14 @@ export function expandHome(input: string): string {
   if (input === "~") return HOME;
   if (input.startsWith("~/")) return path.join(HOME, input.slice(2));
   return input;
+}
+
+export function workspaceDir(baseSessionId: string): string {
+  const safe =
+    baseSessionId.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 80) || "default";
+  return path.join(WORKSPACES_DIR, safe);
+}
+
+export function workspaceFile(baseSessionId: string, file: string): string {
+  return path.join(workspaceDir(baseSessionId), file);
 }

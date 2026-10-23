@@ -6,7 +6,10 @@ import { DuetServer, type PendingPrompt } from "../src/duet/server.js";
 import type { ServerMessage } from "../src/duet/protocol.js";
 
 class FakeBridge extends EventEmitter implements AgentBridge {
+  runs: RunPromptOptions[] = [];
+
   run(options: RunPromptOptions): Promise<void> {
+    this.runs.push(options);
     this.emit("event", { type: "text", text: `echo: ${options.prompt}` });
     this.emit("event", {
       type: "done",
@@ -23,7 +26,7 @@ class FakeBridge extends EventEmitter implements AgentBridge {
   }
 
   lastSessionId(): string | null {
-    return null;
+    return this.runs.at(-1)?.sessionId ?? null;
   }
 }
 
@@ -78,6 +81,12 @@ describe("duet server/client", () => {
     const joined = await client.connect(`ws://127.0.0.1:${port}`);
     expect(joined.sessionId).toBe("ses_test");
     expect(joined.hostUser).toBe("Host");
+    expect(joined.activeChannel).toBe("main");
+    expect(joined.channels[0]).toMatchObject({
+      id: "main",
+      name: "main",
+      sessionId: "ses_test",
+    });
 
     const chat = waitFor(client, "chat");
     client.sendChat("hello host");
@@ -85,13 +94,17 @@ describe("duet server/client", () => {
       user: "Guest",
       text: "hello host",
       source: "guest",
+      channelId: "main",
     });
 
     const stream = waitFor(client, "stream");
     const done = waitFor(client, "turn_complete");
     server.hostPrompt("write tests");
-    await expect(stream).resolves.toMatchObject({ text: "echo: write tests" });
-    await expect(done).resolves.toBeTruthy();
+    const output = await stream;
+    expect(output.text).toContain("echo:");
+    expect(output.text).toContain("write tests");
+    expect(output.channelId).toBe("main");
+    await expect(done).resolves.toMatchObject({ channelId: "main" });
   });
 
   it("asks the host before running a guest prompt", async () => {
@@ -106,10 +119,13 @@ describe("duet server/client", () => {
     client.sendPrompt("fix the bug");
     const pending = await approval;
     expect(pending.text).toBe("fix the bug");
+    expect(pending.channelId).toBe("main");
 
     const stream = waitFor(client, "stream");
     server.approve(pending.id, true);
-    await expect(stream).resolves.toMatchObject({ text: "echo: fix the bug" });
+    const output = await stream;
+    expect(output.text).toContain("echo:");
+    expect(output.text).toContain("fix the bug");
   });
 
   it("runs guest prompts immediately in auto mode", async () => {
@@ -120,8 +136,133 @@ describe("duet server/client", () => {
 
     const stream = waitFor(client, "stream");
     client.sendPrompt("ship it");
-    await expect(stream).resolves.toMatchObject({ text: "echo: ship it" });
+    const output = await stream;
+    expect(output.text).toContain("echo:");
+    expect(output.text).toContain("ship it");
     expect(server.isApprovalMode).toBe(false);
+  });
+
+  it("creates a channel and runs prompts in its own OpenCode session", async () => {
+    const { port, bridge } = await startDuet(false);
+    const client = new DuetClient("Guest", "secret");
+    cleanups.push(() => client.close());
+    await client.connect(`ws://127.0.0.1:${port}`);
+
+    const switched = waitFor(client, "channel_switched");
+    const channels = waitFor(client, "channels");
+    client.sendCreateChannel("sales");
+    const channel = await switched;
+    expect(channel.channel.name).toBe("sales");
+    expect(channel.channel.sessionId).toMatch(/^ses_duet_sales_/);
+    const list = await channels;
+    expect(list.active).toBe(channel.channel.id);
+    expect(list.channels.map((item) => item.name)).toContain("sales");
+
+    const stream = waitFor(client, "stream");
+    client.sendPrompt("close the deal");
+    const output = await stream;
+    expect(output.channelId).toBe(channel.channel.id);
+
+    const run = bridge.runs.at(-1)!;
+    expect(run.sessionId).toBe(channel.channel.sessionId);
+    expect(run.sessionId).not.toBe("ses_test");
+    expect(run.prompt).toContain("[Duet workspace | channel #sales");
+    expect(run.prompt).toContain("close the deal");
+  });
+
+  it("keeps channel history separate and replays it on switch", async () => {
+    const { port } = await startDuet(false);
+    const client = new DuetClient("Guest", "secret");
+    cleanups.push(() => client.close());
+    await client.connect(`ws://127.0.0.1:${port}`);
+
+    const switched = waitFor(client, "channel_switched");
+    client.sendCreateChannel("sales");
+    const sales = await switched;
+    const chat = waitFor(client, "chat");
+    client.sendChat("deal closed");
+    await expect(chat).resolves.toMatchObject({
+      text: "deal closed",
+      channelId: sales.channel.id,
+    });
+
+    const mainSwitch = waitFor(client, "channel_switched");
+    const mainHistory = waitFor(client, "channel_history");
+    client.sendSwitchChannel("main");
+    await expect(mainSwitch).resolves.toMatchObject({ active: "main" });
+    const main = await mainHistory;
+    expect(main.entries.some((entry) => entry.text === "deal closed")).toBe(false);
+
+    const salesSwitch = waitFor(client, "channel_switched");
+    const salesHistory = waitFor(client, "channel_history");
+    client.sendSwitchChannel("sales");
+    await expect(salesSwitch).resolves.toMatchObject({
+      active: sales.channel.id,
+    });
+    const history = await salesHistory;
+    expect(history.entries.some((entry) => entry.text === "deal closed")).toBe(
+      true,
+    );
+  });
+
+  it("runs an approved guest prompt in the channel it was sent from", async () => {
+    const { server, port, bridge } = await startDuet(true);
+    const client = new DuetClient("Guest", "secret");
+    cleanups.push(() => client.close());
+    await client.connect(`ws://127.0.0.1:${port}`);
+
+    const switched = waitFor(client, "channel_switched");
+    client.sendCreateChannel("support");
+    const channel = await switched;
+
+    const approval = new Promise<PendingPrompt>((resolve) =>
+      server.once("approval_request", resolve),
+    );
+    client.sendPrompt("answer the ticket");
+    const pending = await approval;
+    expect(pending.channelId).toBe(channel.channel.id);
+
+    const stream = waitFor(client, "stream");
+    server.approve(pending.id, true);
+    await stream;
+    expect(bridge.runs.at(-1)?.sessionId).toBe(channel.channel.sessionId);
+  });
+
+  it("lets the host archive a channel and moves the guest to main", async () => {
+    const { server, port } = await startDuet(false);
+    const client = new DuetClient("Guest", "secret");
+    cleanups.push(() => client.close());
+    await client.connect(`ws://127.0.0.1:${port}`);
+
+    const switched = waitFor(client, "channel_switched");
+    client.sendCreateChannel("temp");
+    const temp = await switched;
+
+    const back = waitFor(client, "channel_switched");
+    const channels = waitFor(client, "channels");
+    server.archiveChannel("host", temp.channel.id);
+    await expect(back).resolves.toMatchObject({ active: "main" });
+    const list = await channels;
+    expect(list.channels.map((item) => item.name)).not.toContain("temp");
+
+    const error = waitFor(client, "error");
+    client.sendArchiveChannel("main");
+    await expect(error).resolves.toMatchObject({
+      message: expect.stringContaining("only the host"),
+    });
+  });
+
+  it("injects shared memory into prompts in every channel", async () => {
+    const { server, port, bridge } = await startDuet(false);
+    const client = new DuetClient("Guest", "secret");
+    cleanups.push(() => client.close());
+    await client.connect(`ws://127.0.0.1:${port}`);
+
+    server.addMemory("host", "Deploy is on Friday");
+    const stream = waitFor(client, "stream");
+    client.sendPrompt("when is the deploy?");
+    await stream;
+    expect(bridge.runs.at(-1)?.prompt).toContain("Deploy is on Friday");
   });
 
   it("rejects a wrong password", async () => {

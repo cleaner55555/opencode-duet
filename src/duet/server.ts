@@ -9,9 +9,14 @@ import type {
 import {
   hashPassword,
   parseClientMessage,
+  type ChannelInfo,
+  type HistoryEntry,
+  type Role,
   type ServerMessage,
   type User,
 } from "./protocol.js";
+import { ChannelStore, type Channel } from "./channels.js";
+import { SharedMemory } from "./memory.js";
 
 export interface DuetServerOptions {
   hostUser: string;
@@ -23,6 +28,8 @@ export interface DuetServerOptions {
   model?: string;
   agent?: string;
   auto?: boolean;
+  channels?: ChannelStore;
+  memory?: SharedMemory;
 }
 
 export interface PendingPrompt {
@@ -30,9 +37,11 @@ export interface PendingPrompt {
   user: string;
   text: string;
   createdAt: number;
+  channelId: string;
 }
 
 const MAX_QUEUE = 10;
+const MAX_HISTORY = 100;
 
 export class DuetServer extends EventEmitter {
   private wss: WebSocketServer | null = null;
@@ -47,13 +56,25 @@ export class DuetServer extends EventEmitter {
   private queue: PendingPrompt[] = [];
   private active: PendingPrompt | null = null;
   private activeStartedAt = 0;
+  private activeChannelId: string | null = null;
+  private activeResponse = "";
   private stopped = false;
+  private readonly channels: ChannelStore;
+  private readonly memory: SharedMemory;
+  private hostChannelId = "main";
+  private guestChannelId = "main";
+  private history = new Map<string, HistoryEntry[]>();
   private onBridgeEvent = (event: BridgeEvent) => this.handleBridgeEvent(event);
 
   constructor(options: DuetServerOptions) {
     super();
     this.options = options;
     this.approvalMode = options.approvalMode ?? true;
+    this.channels =
+      options.channels ?? new ChannelStore(null, options.sessionId);
+    this.memory = options.memory ?? new SharedMemory(null);
+    this.hostChannelId = this.channels.main.id;
+    this.guestChannelId = this.channels.main.id;
     this.options.bridge.on("event", this.onBridgeEvent);
   }
 
@@ -122,23 +143,36 @@ export class DuetServer extends EventEmitter {
   hostChat(text: string): void {
     const clean = text.trim();
     if (!clean) return;
+    const channel = this.activeChannel("host");
+    const timestamp = Date.now();
+    this.recordHistory(channel.id, {
+      kind: "chat",
+      user: this.options.hostUser,
+      text: clean,
+      source: "host",
+      timestamp,
+    });
     this.broadcast({
       type: "chat",
       user: this.options.hostUser,
       text: clean,
       source: "host",
-      timestamp: Date.now(),
+      channelId: channel.id,
+      channelName: channel.name,
+      timestamp,
     });
   }
 
   hostPrompt(text: string): void {
     const clean = text.trim();
     if (!clean) return;
+    const channel = this.activeChannel("host");
     const pending: PendingPrompt = {
       id: randomUUID(),
       user: this.options.hostUser,
       text: clean,
       createdAt: Date.now(),
+      channelId: channel.id,
     };
     this.enqueue(pending);
   }
@@ -177,6 +211,113 @@ export class DuetServer extends EventEmitter {
     this.enqueue(pending);
   }
 
+  sendChannels(role: Role): void {
+    this.sendToRole(role, this.channelsMessage(role));
+  }
+
+  switchChannel(role: Role, ref: string): void {
+    const channel = this.channels.get(ref);
+    if (!channel) {
+      this.sendError(role, `unknown channel: ${ref}`);
+      return;
+    }
+    if (channel.archived) {
+      this.sendError(role, `channel #${channel.name} is archived`);
+      return;
+    }
+
+    if (role === "host") this.hostChannelId = channel.id;
+    else this.guestChannelId = channel.id;
+
+    this.sendToRole(role, {
+      type: "channel_switched",
+      channel: this.channelInfo(channel),
+      active: channel.id,
+      timestamp: Date.now(),
+    });
+    this.sendHistory(role, channel);
+    this.sendChannels(role);
+  }
+
+  createChannel(role: Role, name: string, description?: string): void {
+    const by =
+      role === "host" ? this.options.hostUser : this.guestUser ?? "guest";
+    let channel: Channel;
+    try {
+      channel = this.channels.create(name, by, description);
+    } catch (error) {
+      this.sendError(role, error instanceof Error ? error.message : String(error));
+      return;
+    }
+
+    this.history.set(channel.id, []);
+    this.switchChannel(role, channel.id);
+    this.sendChannels(this.otherRole(role));
+    this.broadcast({
+      type: "notice",
+      message: `${by} created #${channel.name}.`,
+      timestamp: Date.now(),
+    });
+  }
+
+  archiveChannel(role: Role, ref: string): void {
+    if (role !== "host") {
+      this.sendError(role, "only the host can archive channels");
+      return;
+    }
+    const channel = this.channels.get(ref);
+    if (!channel) {
+      this.sendError(role, `unknown channel: ${ref}`);
+      return;
+    }
+    if (channel.id === "main") {
+      this.sendError(role, "the main channel cannot be archived");
+      return;
+    }
+    if (channel.archived) {
+      this.sendError(role, `channel #${channel.name} is already archived`);
+      return;
+    }
+
+    this.channels.archive(channel.id);
+    if (this.hostChannelId === channel.id) this.switchChannel("host", "main");
+    if (this.guestChannelId === channel.id) this.switchChannel("guest", "main");
+    this.broadcastChannels();
+    this.broadcast({
+      type: "notice",
+      message: `${this.options.hostUser} archived #${channel.name}.`,
+      timestamp: Date.now(),
+    });
+  }
+
+  sendMemory(role: Role): void {
+    const text = this.memory.read();
+    this.sendToRole(role, {
+      type: "memory",
+      text: text || "(shared memory is empty)",
+      timestamp: Date.now(),
+    });
+  }
+
+  addMemory(role: Role, text: string): void {
+    const clean = text.trim();
+    if (!clean) return;
+    const by =
+      role === "host" ? this.options.hostUser : this.guestUser ?? "guest";
+    try {
+      this.memory.appendNote(clean, by);
+    } catch (error) {
+      this.sendError(role, error instanceof Error ? error.message : String(error));
+      return;
+    }
+    this.broadcast({
+      type: "notice",
+      message: `${by} added a note to shared memory.`,
+      timestamp: Date.now(),
+    });
+    this.sendMemory(role);
+  }
+
   private handleConnection(ws: WebSocket): void {
     let joined = false;
 
@@ -207,14 +348,18 @@ export class DuetServer extends EventEmitter {
         joined = true;
         this.guest = ws;
         this.guestUser = message.user;
+        this.guestChannelId = this.channels.main.id;
         this.send(ws, {
           type: "join_accepted",
           sessionId: this.options.sessionId,
           hostUser: this.options.hostUser,
           approvalMode: this.approvalMode,
+          channels: this.channelList(),
+          activeChannel: this.guestChannelId,
           timestamp: Date.now(),
         });
         this.sendPresence();
+        this.sendHistory("guest", this.activeChannel("guest"));
         this.emit("guest_joined", message.user);
         this.emit("message", {
           type: "notice",
@@ -227,22 +372,36 @@ export class DuetServer extends EventEmitter {
       if (!joined) return;
 
       switch (message.type) {
-        case "chat":
+        case "chat": {
+          const channel = this.activeChannel("guest");
+          const timestamp = Date.now();
+          this.recordHistory(channel.id, {
+            kind: "chat",
+            user: this.guestUser ?? "guest",
+            text: message.text,
+            source: "guest",
+            timestamp,
+          });
           this.broadcast({
             type: "chat",
             user: this.guestUser ?? "guest",
             text: message.text,
             source: "guest",
-            timestamp: Date.now(),
+            channelId: channel.id,
+            channelName: channel.name,
+            timestamp,
           });
           break;
+        }
 
         case "prompt": {
+          const channel = this.activeChannel("guest");
           const pending: PendingPrompt = {
             id: message.id,
             user: this.guestUser ?? "guest",
             text: message.text,
             createdAt: Date.now(),
+            channelId: channel.id,
           };
           if (this.approvalMode) {
             this.pending.set(pending.id, pending);
@@ -260,6 +419,30 @@ export class DuetServer extends EventEmitter {
 
         case "approval_response":
           this.approve(message.promptId, message.approved);
+          break;
+
+        case "switch_channel":
+          this.switchChannel("guest", message.channel);
+          break;
+
+        case "create_channel":
+          this.createChannel("guest", message.name, message.description);
+          break;
+
+        case "archive_channel":
+          this.archiveChannel("guest", message.channel);
+          break;
+
+        case "channels_request":
+          this.sendChannels("guest");
+          break;
+
+        case "memory_request":
+          this.sendMemory("guest");
+          break;
+
+        case "memory_add":
+          this.addMemory("guest", message.text);
           break;
 
         case "typing":
@@ -284,6 +467,7 @@ export class DuetServer extends EventEmitter {
         const name = this.guestUser;
         this.guest = null;
         this.guestUser = null;
+        this.guestChannelId = this.channels.main.id;
         this.sendPresence();
         if (name) {
           this.emit("guest_left", name);
@@ -319,18 +503,38 @@ export class DuetServer extends EventEmitter {
     const pending = this.queue.shift()!;
     this.active = pending;
     this.activeStartedAt = Date.now();
+    this.activeChannelId = pending.channelId;
+    this.activeResponse = "";
 
+    const channel =
+      this.channels.get(pending.channelId) ?? this.channels.main;
+    this.activeChannelId = channel.id;
+
+    const timestamp = Date.now();
     this.broadcast({
       type: "prompt_received",
       promptId: pending.id,
       user: pending.user,
       text: pending.text,
-      timestamp: Date.now(),
+      channelId: channel.id,
+      channelName: channel.name,
+      timestamp,
+    });
+    this.recordHistory(channel.id, {
+      kind: "prompt",
+      user: pending.user,
+      text: pending.text,
+      source: pending.user === this.options.hostUser ? "host" : "guest",
+      timestamp,
     });
 
     const options: RunPromptOptions = {
-      prompt: pending.text,
-      sessionId: this.options.sessionId,
+      prompt: this.memory.decorate(
+        channel.name,
+        pending.text,
+        this.channels.list().length,
+      ),
+      sessionId: channel.sessionId,
       cwd: this.options.cwd,
       model: this.options.model,
       agent: this.options.agent,
@@ -342,6 +546,8 @@ export class DuetServer extends EventEmitter {
       this.broadcast({
         type: "error",
         message,
+        channelId: channel.id,
+        channelName: channel.name,
         timestamp: Date.now(),
       });
       this.finishActive();
@@ -349,11 +555,18 @@ export class DuetServer extends EventEmitter {
   }
 
   private handleBridgeEvent(event: BridgeEvent): void {
+    const channel = this.activeChannelId
+      ? this.channels.get(this.activeChannelId)
+      : null;
+
     switch (event.type) {
       case "text":
+        this.activeResponse += (this.activeResponse ? "\n\n" : "") + event.text;
         this.broadcast({
           type: "stream",
           text: event.text,
+          channelId: channel?.id,
+          channelName: channel?.name,
           timestamp: Date.now(),
         });
         break;
@@ -364,6 +577,8 @@ export class DuetServer extends EventEmitter {
           tool: event.tool,
           input: event.input,
           output: event.output,
+          channelId: channel?.id,
+          channelName: channel?.name,
           timestamp: Date.now(),
         });
         break;
@@ -372,18 +587,42 @@ export class DuetServer extends EventEmitter {
         this.broadcast({
           type: "error",
           message: event.message,
+          channelId: channel?.id,
+          channelName: channel?.name,
           timestamp: Date.now(),
         });
         break;
 
-      case "done":
+      case "done": {
+        const active = this.active;
+        if (channel && active) {
+          const response = this.activeResponse.trim();
+          this.memory.recordTurn({
+            channel: channel.name,
+            user: active.user,
+            prompt: active.text,
+            response,
+          });
+          this.recordHistory(channel.id, {
+            kind: "assistant",
+            user: "opencode",
+            text: response || "(no output)",
+            source: "opencode",
+            timestamp: Date.now(),
+          });
+        }
         this.broadcast({
           type: "turn_complete",
           durationMs: this.activeStartedAt ? Date.now() - this.activeStartedAt : 0,
+          channelId: channel?.id,
+          channelName: channel?.name,
           timestamp: Date.now(),
         });
+        this.activeResponse = "";
+        this.activeChannelId = null;
         this.finishActive();
         break;
+      }
 
       case "log":
         this.emit("log", event.message);
@@ -397,7 +636,73 @@ export class DuetServer extends EventEmitter {
   private finishActive(): void {
     this.active = null;
     this.activeStartedAt = 0;
+    this.activeChannelId = null;
     this.processQueue();
+  }
+
+  private activeChannel(role: Role): Channel {
+    const id = role === "host" ? this.hostChannelId : this.guestChannelId;
+    return this.channels.get(id) ?? this.channels.main;
+  }
+
+  private otherRole(role: Role): Role {
+    return role === "host" ? "guest" : "host";
+  }
+
+  private channelInfo(channel: Channel): ChannelInfo {
+    return {
+      ...channel,
+      messageCount: this.history.get(channel.id)?.length ?? 0,
+    };
+  }
+
+  private channelList(): ChannelInfo[] {
+    return this.channels.list().map((channel) => this.channelInfo(channel));
+  }
+
+  private channelsMessage(role: Role): ServerMessage {
+    return {
+      type: "channels",
+      channels: this.channelList(),
+      active: role === "host" ? this.hostChannelId : this.guestChannelId,
+      timestamp: Date.now(),
+    };
+  }
+
+  private sendHistory(role: Role, channel: Channel): void {
+    this.sendToRole(role, {
+      type: "channel_history",
+      channel: this.channelInfo(channel),
+      entries: [...(this.history.get(channel.id) ?? [])].slice(-40),
+      timestamp: Date.now(),
+    });
+  }
+
+  private recordHistory(channelId: string, entry: HistoryEntry): void {
+    const entries = this.history.get(channelId) ?? [];
+    entries.push(entry);
+    if (entries.length > MAX_HISTORY) {
+      entries.splice(0, entries.length - MAX_HISTORY);
+    }
+    this.history.set(channelId, entries);
+  }
+
+  private sendError(role: Role, message: string): void {
+    this.sendToRole(role, {
+      type: "error",
+      message,
+      timestamp: Date.now(),
+    });
+  }
+
+  private sendToRole(role: Role, message: ServerMessage): void {
+    if (role === "host") this.emit("message", message);
+    else this.sendGuest(message);
+  }
+
+  private broadcastChannels(): void {
+    this.sendChannels("host");
+    this.sendChannels("guest");
   }
 
   private sendPresence(): void {

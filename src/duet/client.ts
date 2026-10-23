@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import WebSocket from "ws";
 import {
   hashPassword,
+  type ChannelInfo,
   type ClientMessage,
   type ServerMessage,
 } from "./protocol.js";
@@ -10,6 +11,8 @@ export interface JoinResult {
   sessionId: string;
   hostUser: string;
   approvalMode: boolean;
+  channels: ChannelInfo[];
+  activeChannel: string;
 }
 
 export function normalizeUrl(input: string): string {
@@ -77,6 +80,8 @@ export class DuetClient extends EventEmitter {
               sessionId: message.sessionId,
               hostUser: message.hostUser,
               approvalMode: message.approvalMode,
+              channels: message.channels,
+              activeChannel: message.activeChannel,
             }),
           );
           this.emit("message", message);
@@ -124,6 +129,35 @@ export class DuetClient extends EventEmitter {
       approved,
       timestamp: Date.now(),
     });
+  }
+
+  sendSwitchChannel(channel: string): void {
+    this.send({ type: "switch_channel", channel, timestamp: Date.now() });
+  }
+
+  sendCreateChannel(name: string, description?: string): void {
+    this.send({
+      type: "create_channel",
+      name,
+      description,
+      timestamp: Date.now(),
+    });
+  }
+
+  sendArchiveChannel(channel: string): void {
+    this.send({ type: "archive_channel", channel, timestamp: Date.now() });
+  }
+
+  sendChannelsRequest(): void {
+    this.send({ type: "channels_request", timestamp: Date.now() });
+  }
+
+  sendMemoryRequest(): void {
+    this.send({ type: "memory_request", timestamp: Date.now() });
+  }
+
+  sendMemoryAdd(text: string): void {
+    this.send({ type: "memory_add", text, timestamp: Date.now() });
   }
 
   sendTyping(isTyping: boolean): void {

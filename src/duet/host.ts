@@ -4,8 +4,11 @@ import os from "node:os";
 import localtunnel from "localtunnel";
 import pc from "picocolors";
 import { OpenCodeBridge } from "../opencode.js";
+import { workspaceFile } from "../paths.js";
 import { DuetServer } from "./server.js";
 import { createUi } from "./ui.js";
+import { ChannelStore } from "./channels.js";
+import { SharedMemory } from "./memory.js";
 import type { ServerMessage } from "./protocol.js";
 
 export interface HostOptions {
@@ -105,6 +108,11 @@ export async function hostCommand(options: HostOptions): Promise<void> {
   }
 
   const bridge = new OpenCodeBridge();
+  const channels = new ChannelStore(
+    workspaceFile(sessionId, "channels.json"),
+    sessionId,
+  );
+  const memory = new SharedMemory(workspaceFile(sessionId, "memory.json"));
   const server = new DuetServer({
     hostUser: name,
     password,
@@ -115,6 +123,8 @@ export async function hostCommand(options: HostOptions): Promise<void> {
     model: options.model,
     agent: options.agent,
     auto: Boolean(options.auto),
+    channels,
+    memory,
   });
 
   const port = await server.start(requestedPort);
@@ -154,6 +164,7 @@ export async function hostCommand(options: HostOptions): Promise<void> {
   console.log(pc.bold(pc.green("OpenCode Duet — session ready")));
   console.log(`  host:     ${pc.cyan(name)}`);
   console.log(`  session:  ${sessionId}`);
+  console.log(`  channels: #main (use /new <name> to add one)`);
   console.log(`  approval: ${options.auto ? "off (--auto)" : "on"}`);
   console.log(`  local:    ${lanUrl}`);
   if (tunnelUrl) console.log(`  public:   ${tunnelUrl}`);
@@ -180,6 +191,13 @@ export async function hostCommand(options: HostOptions): Promise<void> {
     onPrompt: (text) => server.hostPrompt(text),
     onApprove: (id, approved) => server.approve(id, approved),
     onAuto: (enabled) => server.setApprovalMode(enabled),
+    onSwitchChannel: (channel) => server.switchChannel("host", channel),
+    onCreateChannel: (channelName) =>
+      server.createChannel("host", channelName),
+    onArchiveChannel: (channel) => server.archiveChannel("host", channel),
+    onChannels: () => server.sendChannels("host"),
+    onMemory: () => server.sendMemory("host"),
+    onMemoryAdd: (text) => server.addMemory("host", text),
     onExit: () => void shutdown(0),
     status: () =>
       pc.dim(
@@ -206,6 +224,7 @@ export async function hostCommand(options: HostOptions): Promise<void> {
       timestamp: Date.now(),
     });
   });
+  server.sendChannels("host");
 
   process.on("SIGINT", () => void shutdown(0));
   process.on("SIGTERM", () => void shutdown(0));

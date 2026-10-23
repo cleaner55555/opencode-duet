@@ -4,7 +4,8 @@ import http from "node:http";
 import path from "node:path";
 import { promisify } from "node:util";
 import pc from "picocolors";
-import { BRIEFS_DIR, CONFIG_FILE } from "./paths.js";
+import { BRIEFS_DIR, CONFIG_FILE, workspaceFile } from "./paths.js";
+import { ChannelStore } from "./duet/channels.js";
 import { ApprovalStore, formatApproval } from "./agent/approvals.js";
 import { loadAgentConfig } from "./agent/config.js";
 import { runBrief, runCheck } from "./agent/runner.js";
@@ -112,6 +113,8 @@ function page(): string {
 </header>
 <main>
   <aside>
+    <h2>Channels</h2>
+    <div id="channels"></div>
     <h2>Briefs</h2>
     <div id="briefs"></div>
   </aside>
@@ -143,7 +146,10 @@ function esc(text) {
 async function refresh() {
   try {
     state = await api('/api/state');
-    $('status').textContent = state.session + ' · ' + state.cwd + ' · next brief: ' + (state.nextBrief || 'disabled');
+    $('status').textContent = state.session + ' · ' + state.cwd + ' · ' + state.channels.length + ' channels · next brief: ' + (state.nextBrief || 'disabled');
+    $('channels').innerHTML = state.channels.length ? state.channels.map((c) =>
+      '<div class="card"><div class="title">#' + esc(c.name) + '</div><div class="meta">' + esc(c.createdBy) + ' · ' + esc(c.sessionId) + '</div></div>'
+    ).join('') : '<div class="muted">samo #main</div>';
     $('briefs').innerHTML = state.briefs.length ? state.briefs.map((b) =>
       '<div class="card brief" data-file="' + esc(b.file) + '"><div class="title">' + esc(b.title) + '</div><div class="meta">' + esc(b.created) + '</div></div>'
     ).join('') : '<div class="muted">nema briefova</div>';
@@ -213,11 +219,22 @@ export async function startDashboard(options: DashboardOptions = {}): Promise<vo
 
       if (req.method === "GET" && url.pathname === "/api/state") {
         const store = new ApprovalStore();
+        const channels = new ChannelStore(
+          workspaceFile(config.session, "channels.json"),
+          config.session,
+        );
         const nextBrief = scheduler.nextBriefAt();
         json(res, 200, {
           session: config.session,
           cwd: config.cwd,
           nextBrief: nextBrief ? nextBrief.toLocaleString() : null,
+          channels: channels.list().map((channel) => ({
+            id: channel.id,
+            name: channel.name,
+            sessionId: channel.sessionId,
+            createdBy: channel.createdBy,
+            createdAt: channel.createdAt,
+          })),
           briefs: listBriefs(),
           approvals: store.list("pending"),
         });

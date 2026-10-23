@@ -4,7 +4,7 @@ Two people, one OpenCode session — plus a proactive Duet agent.
 
 `opencode-duet` has two independent modes:
 
-1. **Shared session** — host an OpenCode session, send a join command to a partner, chat in real time, and run `@opencode` prompts together. Think `claude-duet`, but for OpenCode.
+1. **Shared session** — host an OpenCode session, send a join command to a partner, chat in real time, run `@opencode` prompts together, and split work into named channels (virtual sessions inside the session). Think `claude-duet`, but for OpenCode.
 2. **Proactive agent** — a local daemon that writes a morning brief, runs periodic checks, collects sources (calendar, Git, GitHub, mail, custom commands), sends macOS/webhook notifications, and queues risky actions for explicit approval.
 
 ## Requirements
@@ -74,8 +74,14 @@ opencode-duet join ws://192.168.1.2:54321 --password 1a2b3c4d --name Bob
 
 | Input | What it does |
 | --- | --- |
-| `hello` | chat with the other person |
-| `@opencode fix the failing test` | send a prompt to the shared OpenCode session |
+| `hello` | chat with the other person in the active channel |
+| `@opencode fix the failing test` | send a prompt to the active channel |
+| `/channels` | list channels and their message counts |
+| `/new <name>` | create a channel and switch to it |
+| `/switch <name>` | switch the active channel |
+| `/close <name>` | host archives a channel |
+| `/memory` | show shared memory |
+| `/memory add <text>` | add a note to shared memory |
 | `/approve <id> y` | host approves a guest prompt |
 | `/approve <id> n` | host denies a guest prompt |
 | `/auto on` / `/auto off` | toggle guest approval mode |
@@ -83,6 +89,35 @@ opencode-duet join ws://192.168.1.2:54321 --password 1a2b3c4d --name Bob
 | `/exit` | leave |
 
 Guest prompts are **held for host approval by default**. The host sees the full prompt and an approval id. With `--auto`, guest prompts run immediately.
+
+### Channels (virtual sessions)
+
+Channels are named sub-threads inside one Duet workspace, similar to Slack channels or Claude Duet channels:
+
+- Every channel has its own OpenCode session, so a long task in `#sales` does not fill the main thread's context.
+- All channels share memory. Notes from `/memory add` and short summaries of turns from other channels are injected into each prompt.
+- Each person has their own active channel; messages and OpenCode output are scoped to it. Activity in another channel is shown dimmed, e.g. `[#sales] → Guest: …`.
+- Channels are stored under `~/.local/state/opencode-duet/workspaces/<session>/`. Use `--session <id>` on the host if you want to keep the same channels across restarts.
+- The host can archive a channel with `/close`; the main channel cannot be archived.
+
+Example:
+
+```text
+/new sales
+@opencode prepare the Q4 pipeline report
+
+/switch main
+@opencode summarize what changed in #sales
+```
+
+The second prompt sees the shared memory summary from `#sales`, even though it runs in the main OpenCode session.
+
+List channels from a terminal:
+
+```bash
+opencode-duet channels --session <id>
+opencode-duet channels --session <id> --all   # include archived
+```
 
 ### Remote partner
 
@@ -144,7 +179,7 @@ opencode-duet agent uninstall
 opencode-duet dashboard
 ```
 
-Opens `http://127.0.0.1:8787` with recent briefs, pending approvals, Approve/Reject buttons, and a **Run brief now** button. The server binds to localhost only.
+Opens `http://127.0.0.1:8787` with channels, recent briefs, pending approvals, Approve/Reject buttons, and a **Run brief now** button. The server binds to localhost only.
 
 ### Chat with the agent
 
@@ -152,7 +187,7 @@ Opens `http://127.0.0.1:8787` with recent briefs, pending approvals, Approve/Rej
 opencode-duet chat
 ```
 
-Opens a small terminal chat against the same OpenCode session the agent uses (`ses_duet_agent` by default). Use `/new` for a fresh session and `/exit` to leave. This is optional — you can also open the session in the OpenCode TUI.
+Opens a small terminal chat against the same OpenCode workspace the agent uses (`ses_duet_agent` by default). `/new <name>` creates a channel with its own OpenCode session, `/switch <name>` moves between channels, `/memory` shows shared memory, and `/exit` leaves. This is optional — you can also open the session in the OpenCode TUI.
 
 ### Approvals
 
@@ -223,13 +258,16 @@ Shows config, schedule, pending approvals, state and log paths.
 ## How it works
 
 - The shared session uses a small WebSocket relay hosted by the host. The guest connects with a password; the host remains the only machine running OpenCode.
+- Each channel maps to a separate OpenCode session. The main channel uses the host's base `--session` id; new channels get ids like `ses_duet_sales_1a2b3c4d`.
 - Each `@opencode` prompt is executed with:
 
   ```bash
-  opencode run --format json --session <id> -- <prompt>
+  opencode run --format json --session <channel-session> -- <prompt>
   ```
 
-  JSON events (`text`, `tool_use`, `step_finish`) are streamed to both people.
+  JSON events (`text`, `tool_use`, `step_finish`) are streamed to the active channel.
+- Before a prompt is sent, the shared-memory block is prepended: notes plus short summaries of turns from other channels. Channel transcripts stay in their own OpenCode sessions.
+- Channel metadata and shared memory are persisted as JSON under `~/.local/state/opencode-duet/workspaces/<session>/`.
 - The agent uses the same bridge with a dedicated session id (`ses_duet_agent` by default). It collects sources, runs the prompt, saves the brief, parses `duet-action` blocks, and queues approvals.
 - macOS notifications use `osascript`; webhooks use `fetch`.
 - The launchd installer writes `~/Library/LaunchAgents/com.opencode-duet.agent.plist`.
@@ -251,13 +289,14 @@ npm run build
 npm test
 ```
 
-Tests cover the protocol, scheduler, approval store, WebSocket server/client, and an end-to-end agent run with a fake `opencode` binary.
+Tests cover the protocol, channel store, shared memory, scheduler, approval store, WebSocket server/client, channel routing, and an end-to-end agent run with a fake `opencode` binary.
 
 ## Limitations
 
 - The agent runs on your machine, not in a cloud VM; it pauses when the machine sleeps.
 - Sources are shell commands, not OAuth connectors. Calendar/mail/GitHub integrations depend on the CLIs you have installed.
 - One guest per host session.
+- Channel chat history is kept in memory for the current process; the channel's OpenCode session and shared memory persist, so the assistant keeps its context across restarts.
 - No built-in end-to-end encryption.
 
 ## License

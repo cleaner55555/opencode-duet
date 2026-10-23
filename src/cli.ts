@@ -13,6 +13,9 @@ import {
   writeDefaultConfig,
 } from "./agent/daemon.js";
 import { ApprovalStore, formatApproval } from "./agent/approvals.js";
+import { loadAgentConfig } from "./agent/config.js";
+import { CONFIG_FILE, workspaceFile } from "./paths.js";
+import { ChannelStore } from "./duet/channels.js";
 import { chatCommand } from "./chat.js";
 import { startDashboard } from "./dashboard.js";
 
@@ -24,7 +27,7 @@ export async function runCli(argv: string[]): Promise<void> {
     .description(
       "Two people, one OpenCode session — plus a proactive Duet agent.",
     )
-    .version("0.1.0");
+    .version("0.2.0");
 
   program
     .command("host")
@@ -58,6 +61,33 @@ export async function runCli(argv: string[]): Promise<void> {
     .option("--config <file>", "agent config file")
     .action(async (options) => {
       await runAgentOnce({ config: options.config });
+    });
+
+  program
+    .command("channels")
+    .description("list channels (virtual sessions) in a Duet workspace")
+    .option("--session <id>", "base OpenCode session id")
+    .option("--config <file>", "agent config file")
+    .option("--all", "include archived channels")
+    .action((options) => {
+      const config = loadAgentConfig(options.config ?? CONFIG_FILE);
+      const base = options.session?.trim() || config.session;
+      const store = new ChannelStore(
+        workspaceFile(base, "channels.json"),
+        base,
+      );
+      const channels = store.list(Boolean(options.all));
+      if (channels.length === 0) {
+        console.log(pc.dim("no channels"));
+        return;
+      }
+      for (const channel of channels) {
+        const marker = channel.id === "main" ? "*" : " ";
+        const archived = channel.archived ? pc.dim(" (archived)") : "";
+        console.log(
+          `${marker} #${channel.name}${archived} ${pc.dim(channel.sessionId)}`,
+        );
+      }
     });
 
   program
